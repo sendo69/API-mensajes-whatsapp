@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SaaS WhatsApp API | Portal</title>
+    
+    <!-- Fuentes y Tailwind -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        primary: '#3b82f6',
+                        dark: '#0f172a',
+                        surface: '#f8fafc',
+                        glass: 'rgba(255, 255, 255, 0.7)'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .glass-card { background: var(--glass); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); }
+        .sidebar-item-active { background: #3b82f615; color: #3b82f6; border-right: 3px solid #3b82f6; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .qr-container canvas { border-radius: 15px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="bg-surface text-slate-900 font-sans">
+    <div id="root"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.4.4/build/qrcode.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Componentes Reutilizables ---
+        const Button = ({ children, variant = 'primary', className = '', ...props }) => {
+            const base = "px-4 py-2 rounded-xl font-medium transition-all duration-200 active:scale-95 flex items-center justify-center gap-2";
+            const variants = {
+                primary: "bg-primary text-white hover:bg-blue-600 shadow-lg shadow-blue-200",
+                secondary: "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50",
+                danger: "bg-red-50 text-red-600 hover:bg-red-100",
+                ghost: "text-slate-500 hover:bg-slate-100"
+            };
+            return <button className={`${base} ${variants[variant]} ${className}`} {...props}>{children}</button>;
+        };
+
+        const Card = ({ children, className = '', title }) => (
+            <div className={`bg-white rounded-2xl border border-slate-100 shadow-sm p-6 ${className}`}>
+                {title && <h3 class="text-lg font-semibold mb-4 text-slate-800">{title}</h3>}
+                {children}
+            </div>
+        );
+
+        const Input = ({ label, ...props }) => (
+            <div className="flex flex-col gap-1.5 w-full mb-4">
+                {label && <label className="text-sm font-medium text-slate-600 ml-1">{label}</label>}
+                <input className="px-4 py-2.5 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-blue-100 outline-none transition-all text-slate-800" {...props} />
+            </div>
+        );
+
+        const JsonTree = ({ data, path = '', onLeafClick }) => {
+            if (data === null || data === undefined) return null;
+            if (typeof data !== 'object') {
+                return (
+                    <span onClick={(e) => { e.stopPropagation(); onLeafClick(path, String(data), e); }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded cursor-pointer hover:bg-emerald-500/40 transition-all text-[11px] font-mono group"
+                        title={`Clic para asignar: ${path}`}>
+                        {typeof data === 'string' ? `"${data}"` : String(data)}
+                        <i className="fas fa-mouse-pointer text-[8px] opacity-0 group-hover:opacity-100 text-emerald-400"></i>
+                    </span>
+                );
+            }
+            if (Array.isArray(data)) {
+                return (<div className="space-y-0.5 ml-3 border-l border-slate-700/50 pl-3">
+                    {data.map((item, i) => (<div key={i} className="flex items-start gap-2 py-0.5">
+                        <span className="text-slate-500 text-[11px] font-mono">[{i}]</span>
+                        <JsonTree data={item} path={path ? `${path}.${i}` : String(i)} onLeafClick={onLeafClick} />
+                    </div>))}
+                </div>);
+            }
+            return (<div className="space-y-0.5 ml-3 border-l border-slate-700/50 pl-3">
+                {Object.entries(data).map(([key, value]) => {
+                    const fp = path ? `${path}.${key}` : key;
+                    const isObj = value && typeof value === 'object';
+                    return (<div key={key}>
+                        <div className="flex items-start gap-2 py-0.5">
+                            <span className="text-slate-400 text-[11px] font-mono shrink-0">{key}:</span>
+                            {!isObj && <JsonTree data={value} path={fp} onLeafClick={onLeafClick} />}
+                        </div>
+                        {isObj && <JsonTree data={value} path={fp} onLeafClick={onLeafClick} />}
+                    </div>);
+                })}
+            </div>);
+        };
+
+        const Modal = ({ isOpen, onClose, title, children, size = 'normal' }) => {
+            if (!isOpen) return null;
+            const sz = size === 'wide' ? 'max-w-4xl' : 'max-w-lg';
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose}></div>
+                    <div className={`bg-white rounded-3xl w-full ${sz} relative z-10 shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-hidden flex flex-col`}>
+                        <div className="flex items-center justify-between p-6 border-b shrink-0">
+                            <h3 className="text-xl font-bold">{title}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><i className="fas fa-times text-xl"></i></button>
+                        </div>
+                        <div className="p-6 overflow-y-auto flex-1">{children}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Aplicación Principal ---
+        function App() {
+            const [auth, setAuth] = useState({ loggedIn: false, client: null });
+            const [section, setSection] = useState('inicio');
+            const [data, setData] = useState({ templates: [], automations: [], logs: [], status: { connected: false, code: null } });
+            const [modals, setModals] = useState({ template: false, automation: false, register: false });
+            const [selectedTemplate, setSelectedTemplate] = useState('');
+            const [editingTemplate, setEditingTemplate] = useState(null);
+            const [editingRule, setEditingRule] = useState(null);
+            const [selectedSignal, setSelectedSignal] = useState(null);
+            const [jsonPopup, setJsonPopup] = useState(null);
+
+            const API_BASE = '/api/v1';
+
+            useEffect(() => {
+                const key = localStorage.getItem('ws_key');
+                if (key) checkAuth(key);
+            }, []);
+
+            const checkAuth = async (key) => {
+                try {
+                    const res = await fetch(`${API_BASE}/auth/me`, { headers: { 'X-API-Key': key } });
+                    if (res.ok) {
+                        const client = await res.json();
+                        setAuth({ loggedIn: true, client });
+                        initData();
+                    } else { logout(); }
+                } catch (e) { logout(); }
+            };
+
+            const login = (key) => { localStorage.setItem('ws_key', key); checkAuth(key); };
+            const logout = () => { localStorage.removeItem('ws_key'); setAuth({ loggedIn: false, client: null }); };
+
+            const initData = () => {
+                refreshAll();
+                const interval = setInterval(refreshAll, 10000);
+                return () => clearInterval(interval);
+            };
+
+            const refreshAll = async () => {
+                const key = localStorage.getItem('ws_key');
+                const headers = { 'X-API-Key': key };
+                
+                const [tRes, aRes, lRes, qRes, sRes] = await Promise.all([
+                    fetch(`${API_BASE}/templates`, { headers }),
+                    fetch(`${API_BASE}/automations`, { headers }),
+                    fetch(`${API_BASE}/automations/logs`, { headers }),
+                    fetch(`${API_BASE}/instances/qr`, { headers }),
+                    fetch(`${API_BASE}/instances/status`, { headers })
+                ]);
+
+                const qData = await qRes.json();
+                const sData = await sRes.json();
+                
+                const isConnected = sData.instance?.state === 'open';
+
+                setData({
+                    templates: await tRes.json(),
+                    automations: await aRes.json(),
+                    logs: await lRes.json(),
+                    status: { connected: isConnected, code: isConnected ? null : qData.code }
+                });
+
+                if (!isConnected && qData.code) {
+                    setTimeout(() => {
+                        const canvas = document.getElementById('qrCanvas');
+                        if (canvas) QRCode.toCanvas(canvas, qData.code, { width: 200, margin: 2, color: { dark: '#0f172a' } });
+                    }, 100);
+                }
+            };
+
+            const handleRegister = async (e) => {
+                e.preventDefault();
+                const body = { name: e.target.name.value, email: e.target.email.value };
+                const res = await fetch(`${API_BASE}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+                const resData = await res.json();
+                if (resData.api_key) login(resData.api_key);
+            };
+
+            if (!auth.loggedIn) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-slate-100">
+                        <Card className="w-full max-w-md !p-8 shadow-2xl">
+                            <div className="text-center mb-8">
+                                <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center text-white text-3xl mx-auto mb-4 shadow-xl shadow-blue-200">
+                                    <i className="fab fa-whatsapp"></i>
+                                </div>
+                                <h1 className="text-2xl font-bold text-slate-800">WhatsApp SaaS</h1>
+                                <p className="text-slate-500 mt-1">Conecta tu negocio al mundo</p>
+                            </div>
+
+                            {!modals.register ? (
+                                <form onSubmit={(e) => { e.preventDefault(); login(e.target.key.value); }}>
+                                    <Input label="Tu API Key" name="key" type="password" placeholder="sk_..." required />
+                                    <Button className="w-full py-3 text-lg mt-2">Acceder al Portal</Button>
+                                    <p className="text-center text-sm text-slate-500 mt-6">
+                                        ¿Nuevo aquí? <button type="button" onClick={() => setModals({ ...modals, register: true })} className="text-primary font-semibold hover:underline">Regístrate gratis</button>
+                                    </p>
+                                </form>
+                            ) : (
+                                <form onSubmit={handleRegister}>
+                                    <Input label="Nombre del Negocio" name="name" placeholder="Ej: Autolavado Premium" required />
+                                    <Input label="Email de Contacto" name="email" type="email" placeholder="admin@ejemplo.com" required />
+                                    <Button className="w-full py-3 text-lg mt-2">Crear mi Cuenta</Button>
+                                    <Button variant="ghost" className="w-full mt-2" onClick={() => setModals({ ...modals, register: false })}>Volver al Inicio</Button>
+                                </form>
+                            )}
+                        </Card>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex min-h-screen bg-surface">
+                    {/* Sidebar */}
+                    <div className="w-64 bg-white border-r border-slate-200 flex flex-col hidden md:flex">
+                        <div className="p-8">
+                            <div className="flex items-center gap-3 text-primary font-bold text-xl">
+                                <i className="fab fa-whatsapp text-2xl"></i>
+                                <span>API PORTAL</span>
+                            </div>
+                        </div>
+                        <nav className="flex-1 px-4 space-y-1">
+                            {[
+                                { id: 'inicio', icon: 'fas fa-home', label: 'Inicio' },
+                                { id: 'plantillas', icon: 'fas fa-file-alt', label: 'Plantillas' },
+                                { id: 'automatizacion', icon: 'fas fa-bolt', label: 'Automatización' }
+                            ].map(item => (
+                                <button 
+                                    key={item.id}
+                                    onClick={() => setSection(item.id)}
+                                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${section === item.id ? 'bg-blue-50 text-primary' : 'text-slate-500 hover:bg-slate-50'}`}
+                                >
+                                    <i className={`${item.icon} w-5`}></i>
+                                    {item.label}
+                                </button>
+                            ))}
+                        </nav>
+                        <div className="p-6 border-t border-slate-100">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
+                                    <i className="fas fa-user"></i>
+                                </div>
+                                <div className="overflow-hidden">
+                                    <p className="text-sm font-bold text-slate-800 truncate">{auth.client?.name}</p>
+                                    <p className="text-xs text-slate-500 truncate">{auth.client?.email}</p>
+                                </div>
+                            </div>
+                            <Button variant="danger" className="w-full py-2" onClick={logout}>
+                                <i className="fas fa-sign-out-alt"></i> Salir
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <main className="flex-1 h-screen overflow-y-auto custom-scrollbar p-6 md:p-10">
+                        <header className="flex items-center justify-between mb-8">
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-800 capitalize">{section}</h2>
+                                <p className="text-slate-500">Gestiona tu comunicación en tiempo real</p>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold ${data.status.connected ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                                    <span className={`w-2 h-2 rounded-full animate-pulse ${data.status.connected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                                    {data.status.connected ? 'WhatsApp Activo' : 'Desconectado'}
+                                </div>
+                                <button onClick={refreshAll} className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-500 hover:text-primary hover:border-primary transition-all">
+                                    <i className="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                        </header>
+
+                        {section === 'inicio' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <Card title="Conexión de WhatsApp">
+                                    <div className="flex flex-col items-center py-6">
+                                        {data.status.connected ? (
+                                            <div className="text-center">
+                                                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-3xl flex items-center justify-center text-4xl mx-auto mb-4">
+                                                    <i className="fas fa-check-double"></i>
+                                                </div>
+                                                <p className="font-bold text-lg">Sesión Activa</p>
+                                                <p className="text-slate-500 text-sm mb-6">Tu cuenta está lista para enviar y recibir mensajes.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center">
+                                                <div className="qr-container mb-4">
+                                                    <canvas id="qrCanvas" className="mx-auto"></canvas>
+                                                </div>
+                                                <p className="text-slate-500 text-sm mb-6">Escanea el código desde WhatsApp &gt; Dispositivos Vinculados</p>
+                                            </div>
+                                        )}
+                                        <Button variant="secondary" onClick={() => fetch(`${API_BASE}/instances/init`, { method: 'POST', headers: { 'X-API-Key': localStorage.getItem('ws_key') } }).then(refreshAll)}>
+                                            <i className="fas fa-redo"></i> Reiniciar Instancia
+                                        </Button>
+                                    </div>
+                                </Card>
+
+                                <Card title="Credenciales de Integración">
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Tu API Key Privada</label>
+                                            <div className="flex gap-2 mt-1">
+                                                <input readOnly value={auth.client?.api_key} className="flex-1 bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl text-sm font-mono text-slate-600" />
+                                                <Button variant="secondary" onClick={() => navigator.clipboard.writeText(auth.client?.api_key)}><i className="fas fa-copy"></i></Button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">URL de Captura Webhook</label>
+                                            <div className="flex gap-2 mt-1">
+                                                <input readOnly value={`${window.location.origin}${API_BASE}/automations/capture/${auth.client?.id}`} className="flex-1 bg-slate-50 border border-slate-100 px-4 py-2 rounded-xl text-sm font-mono text-slate-600" />
+                                                <Button variant="secondary" onClick={() => navigator.clipboard.writeText(`${window.location.origin}${API_BASE}/automations/capture/${auth.client?.id}`)}><i className="fas fa-copy"></i></Button>
+                                            </div>
+                                            <p className="text-xs text-slate-400 mt-2 italic">* Envía tus JSON a esta URL para disparar mensajes automáticos.</p>
+                                        </div>
+                                    </div>
+                                </Card>
+
+                                <Card title="Últimas Señales Recibidas" className="lg:col-span-2">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full">
+                                            <thead className="bg-slate-50">
+                                                <tr>
+                                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase">Fecha/Hora</th>
+                                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase">Payload JSON</th>
+                                                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-500 uppercase">Estado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {data.logs.map(log => (
+                                                    <tr key={log.id} className="hover:bg-slate-50 transition-all">
+                                                        <td className="px-6 py-4 text-sm text-slate-600">{new Date(log.created_at).toLocaleString()}</td>
+                                                        <td className="px-6 py-4 text-xs font-mono text-blue-500 bg-blue-50/30 truncate max-w-xs">{JSON.stringify(log.payload)}</td>
+                                                        <td className="px-6 py-4">
+                                                            <span className="px-2 py-1 bg-green-100 text-green-600 rounded-md text-[10px] font-bold uppercase">Recibido</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {data.logs.length === 0 && <tr><td colSpan="3" className="px-6 py-10 text-center text-slate-400">No hay señales capturadas aún.</td></tr>}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </Card>
+                            </div>
+                        )}
+
+                        {section === 'plantillas' && (
+                            <div>
+                                <div className="flex justify-end mb-6">
+                                    <Button onClick={() => { setEditingTemplate(null); setModals({ ...modals, template: true }); }}>+ Crear Plantilla</Button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                    {data.templates.map(t => (
+                                        <Card key={t.id} className="group relative">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <h4 className="font-bold text-slate-800">{t.name}</h4>
+                                                <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-tight">{t.slug}</span>
+                                            </div>
+                                            <p className="text-sm text-slate-500 line-clamp-3 mb-6 bg-slate-50 p-4 rounded-xl italic leading-relaxed">"{t.content}"</p>
+                                            <div className="flex justify-end gap-2 border-t pt-4">
+                                                <Button variant="ghost" onClick={() => { setEditingTemplate(t); setModals({ ...modals, template: true }); }} className="text-blue-400 hover:text-blue-600"><i className="fas fa-edit"></i></Button>
+                                                <Button variant="ghost" onClick={() => deleteItem('templates', t.id)} className="text-red-400 hover:text-red-600"><i className="fas fa-trash-alt"></i></Button>
+                                            </div>
+                                        </Card>
+                                    ))}
+                                    {data.templates.length === 0 && (
+                                        <div className="col-span-full py-20 text-center bg-white rounded-3xl border-2 border-dashed border-slate-200 text-slate-400">
+                                            <i className="fas fa-file-alt text-4xl mb-4"></i>
+                                            <p>Aún no tienes plantillas creadas</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {section === 'automatizacion' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <div className="lg:col-span-2">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="text-xl font-bold">Reglas de Disparo</h3>
+                                        <Button onClick={() => { setEditingRule(null); setSelectedTemplate(''); setModals({ ...modals, automation: true }); }}>+ Nueva Regla</Button>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {data.automations.map(a => (
+                                            <Card key={a.id} className="hover:border-primary/30 transition-all">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-12 h-12 bg-blue-50 text-primary rounded-xl flex items-center justify-center text-xl">
+                                                            <i className="fas fa-robot"></i>
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="font-bold text-slate-800">{a.name}</h4>
+                                                            <p className="text-xs text-slate-500 mt-1">Busca el teléfono en: <span className="font-mono text-primary bg-blue-50 px-1 rounded">{a.phone_column}</span></p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <Button variant="secondary" onClick={() => { setEditingRule(a); setSelectedTemplate(a.template_id); setModals({ ...modals, automation: true }); }} className="text-blue-500 hover:text-blue-700"><i className="fas fa-edit"></i></Button>
+                                                        <Button variant="danger" onClick={() => deleteItem('automations', a.id)}><i className="fas fa-trash"></i></Button>
+                                                    </div>
+                                                </div>
+                                            </Card>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <Card title="Guía Rápida">
+                                        <div className="space-y-4 text-sm text-slate-600">
+                                            <div className="flex gap-3">
+                                                <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs">1</span>
+                                                <p>Crea una <b>Plantilla</b> con variables como <code className="bg-slate-100 px-1">{'{{nombre}}'}</code>.</p>
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs">2</span>
+                                                <p>Crea una <b>Regla</b> y vincula los campos de tu JSON a la plantilla.</p>
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs">3</span>
+                                                <p>Envía un POST a tu <b>URL de Captura</b> y el mensaje se enviará solo.</p>
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <span className="w-6 h-6 bg-slate-100 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs">4</span>
+                                                <p>Usa <code className="bg-slate-100 px-1">{'{{llaves}}'}</code> para datos dinámicos.</p>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Modales */}
+                    <Modal isOpen={modals.template} onClose={() => setModals({ ...modals, template: false })} title={editingTemplate ? "Editar Plantilla" : "Nueva Plantilla de Mensaje"} size="wide">
+                        <form key={editingTemplate?.id || 'new'} onSubmit={async (e) => {
+                            e.preventDefault();
+                            await saveItem('templates', { name: e.target.name.value, slug: e.target.slug.value, content: e.target.content.value }, editingTemplate?.id);
+                            setModals({ ...modals, template: false });
+                        }}>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <Input label="Nombre de la Plantilla" name="name" defaultValue={editingTemplate?.name || ''} placeholder="Ej: Confirmación de Pago" required />
+                                    <Input label="ID único (slug)" name="slug" defaultValue={editingTemplate?.slug || ''} placeholder="pago_confirmado" required />
+                                    
+                                    <div>
+                                        <label className="text-sm font-medium text-slate-600 ml-1">Cuerpo del Mensaje</label>
+                                        <textarea 
+                                            id="templateContent"
+                                            name="content" 
+                                            defaultValue={editingTemplate?.content || ''}
+                                            className="w-full px-4 py-3 rounded-xl border border-slate-200 mt-1.5 min-h-[200px] focus:ring-2 focus:ring-blue-100 outline-none text-sm leading-relaxed" 
+                                            placeholder="Hola {{nombre}}, recibimos tu pago..."
+                                            required
+                                        ></textarea>
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">TIP</span>
+                                            <p className="text-[10px] text-slate-400 font-medium">Haz clic en los <span className="text-emerald-500">valores verdes</span> del panel derecho para insertar variables automáticamente</p>
+                                        </div>
+                                    </div>
+
+                                    {(() => {
+                                        const content = document.getElementById('templateContent')?.value || editingTemplate?.content || '';
+                                        const vars = content.match(/{{(.*?)}}/g) || [];
+                                        if (vars.length > 0) return (
+                                            <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+                                                <p className="text-[10px] font-bold text-blue-700 uppercase mb-2">Variables detectadas:</p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {vars.map((v, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-mono font-bold">{v}</span>)}
+                                                </div>
+                                            </div>
+                                        );
+                                        return null;
+                                    })()}
+                                </div>
+
+                                <div className="bg-slate-900 rounded-2xl p-5 text-white overflow-hidden flex flex-col min-h-[400px]">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                                            <i className="fas fa-mouse-pointer"></i> Clic para insertar variable
+                                        </h4>
+                                        <i className="fas fa-code text-emerald-400/50"></i>
+                                    </div>
+                                    
+                                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed bg-slate-800/50 p-3 rounded-xl">
+                                        <b className="text-emerald-300">Paso 1:</b> Selecciona una señal capturada.<br/>
+                                        <b className="text-emerald-300">Paso 2:</b> Haz clic en un <span className="text-emerald-300 bg-emerald-500/20 px-1 rounded">valor verde</span> para insertarlo como <code className="text-amber-300">{"{{variable}}"}</code> en tu mensaje.
+                                    </p>
+
+                                    <select 
+                                        className="w-full bg-slate-800 border-none rounded-xl px-3 py-2 text-xs text-slate-200 mb-3 outline-none focus:ring-1 focus:ring-emerald-500"
+                                        onChange={(e) => {
+                                            const log = data.logs.find(l => l.id === e.target.value);
+                                            setSelectedSignal(log ? log.payload : null);
+                                        }}
+                                    >
+                                        <option value="">-- Selecciona una señal capturada --</option>
+                                        {data.logs.slice(0, 10).map(l => (
+                                            <option key={l.id} value={l.id}>{new Date(l.created_at).toLocaleString()} - Señal</option>
+                                        ))}
+                                    </select>
+
+                                    <div className="flex-1 bg-slate-950 rounded-xl p-4 overflow-auto custom-scrollbar border border-slate-800">
+                                        {selectedSignal ? (
+                                            <JsonTree data={selectedSignal} onLeafClick={(path) => {
+                                                const ta = document.getElementById('templateContent');
+                                                if (!ta) return;
+                                                const varTag = `{{${path}}}`;
+                                                const start = ta.selectionStart;
+                                                const end = ta.selectionEnd;
+                                                const before = ta.value.substring(0, start);
+                                                const after = ta.value.substring(end);
+                                                ta.value = before + varTag + after;
+                                                ta.focus();
+                                                ta.selectionStart = ta.selectionEnd = start + varTag.length;
+                                            }} />
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
+                                                <i className="fas fa-inbox text-3xl"></i>
+                                                <p className="text-xs text-center">Selecciona una señal arriba<br/>para ver los campos disponibles.</p>
+                                                {data.logs.length === 0 && (
+                                                    <p className="text-[10px] text-slate-600 bg-slate-800 p-3 rounded-lg mt-2 text-center">
+                                                        <i className="fas fa-info-circle mr-1"></i>
+                                                        No hay señales aún. Envía un POST a tu URL de Webhook primero.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex gap-3">
+                                <Button type="button" variant="secondary" className="flex-1" onClick={() => setModals({ ...modals, template: false })}>Cancelar</Button>
+                                <Button type="submit" className="flex-[2] py-3">
+                                    {editingTemplate ? 'Guardar Cambios' : 'Crear Plantilla'}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <Modal isOpen={modals.automation} onClose={() => { setModals({ ...modals, automation: false }); setJsonPopup(null); setSelectedSignal(null); }} title={editingRule ? "Editar Regla" : "Nueva Regla de Automatización"} size="wide">
+                        <form key={editingRule?.id || 'new'} onSubmit={async (e) => {
+                            e.preventDefault();
+                            const mapping = {};
+                            document.querySelectorAll('.mapping-input').forEach(i => mapping[i.dataset.var] = i.value);
+                            
+                            const triggerPath = e.target.triggerPath?.value;
+                            const triggerValue = e.target.triggerValue?.value;
+                            if (triggerPath && triggerValue) {
+                                mapping._trigger = { path: triggerPath, value: triggerValue };
+                            }
+
+                            await saveItem('automations', { 
+                                name: e.target.aname.value, 
+                                table_name: 'EXTERNAL', 
+                                event_type: 'WEBHOOK',
+                                phone_column: e.target.aphone.value, 
+                                template_id: selectedTemplate,
+                                mapping
+                            }, editingRule?.id);
+                            setModals({ ...modals, automation: false });
+                            setJsonPopup(null);
+                            setSelectedSignal(null);
+                        }}>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <Input label="Nombre de la Regla" name="aname" defaultValue={editingRule?.name || ''} placeholder="Ej: Notificación de Entrega" required />
+                                    
+                                    <div>
+                                        <label className="text-sm font-medium text-slate-600 ml-1">Plantilla a Usar</label>
+                                        <select 
+                                            className="w-full px-4 py-2.5 rounded-xl border border-slate-200 mt-1.5 outline-none bg-white"
+                                            value={selectedTemplate}
+                                            onChange={(e) => setSelectedTemplate(e.target.value)}
+                                            required
+                                        >
+                                            <option value="">Selecciona una plantilla...</option>
+                                            {data.templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-sm font-medium text-slate-600 ml-1 flex items-center gap-2">
+                                            <span>📱</span> Campo del Teléfono
+                                        </label>
+                                        <input name="aphone" defaultValue={editingRule?.phone_column || ''} placeholder="👈 Haz clic en un campo del JSON" required readOnly
+                                            className="px-4 py-2.5 rounded-xl border border-slate-200 outline-none text-slate-800 w-full mt-1.5 bg-slate-50 cursor-pointer font-mono text-sm" 
+                                            onClick={() => alert('Haz clic en un valor verde del panel derecho para asignarlo aquí.')} />
+                                    </div>
+
+                                    <div className="bg-purple-50/50 p-4 rounded-xl border border-purple-100">
+                                        <p className="text-[11px] font-bold text-purple-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                            <span>🎯</span> Condición de Activación (Opcional)
+                                        </p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[10px] text-purple-600 font-bold ml-1">Campo</label>
+                                                <input name="triggerPath" defaultValue={editingRule?.mapping?._trigger?.path || ''} placeholder="👈 Clic en JSON" readOnly
+                                                    className="w-full px-3 py-2 rounded-lg border border-purple-200 text-sm bg-white/50 font-mono outline-none" />
+                                            </div>
+                                            <div>
+                                                <label className="text-[10px] text-purple-600 font-bold ml-1">Valor</label>
+                                                <input name="triggerValue" defaultValue={editingRule?.mapping?._trigger?.value || ''} placeholder="auto"  readOnly
+                                                    className="w-full px-3 py-2 rounded-lg border border-purple-200 text-sm bg-white/50 font-mono outline-none" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {(() => {
+                                        const t = data.templates.find(x => x.id === selectedTemplate);
+                                        if (!t) return null;
+                                        const vars = t.content.match(/{{(.*?)}}/g) || [];
+                                        if (vars.length === 0) return (
+                                            <div className="p-4 bg-yellow-50 text-yellow-700 rounded-xl text-xs">
+                                                Esta plantilla no tiene variables. Se enviará el texto tal cual.
+                                            </div>
+                                        );
+                                        return (
+                                            <div className="bg-green-50/50 p-4 rounded-xl border border-green-100">
+                                                <p className="text-[11px] font-bold text-green-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                    <span>📝</span> Variables de la Plantilla
+                                                </p>
+                                                <div className="space-y-3">
+                                                    {vars.map(v => {
+                                                        const varName = v.replace('{{','').replace('}}','');
+                                                        return (
+                                                            <div key={v} className="flex items-center gap-2">
+                                                                <span className="text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded-lg shrink-0">{v}</span>
+                                                                <input 
+                                                                    className="mapping-input flex-1 px-3 py-2 rounded-lg border border-green-200 text-sm font-mono bg-white/50 outline-none" 
+                                                                    placeholder="👈 Clic en JSON" 
+                                                                    data-var={varName}
+                                                                    defaultValue={editingRule?.mapping?.[varName] || ''}
+                                                                    readOnly
+                                                                    required
+                                                                />
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+
+                                <div className="bg-slate-900 rounded-2xl p-5 text-white overflow-hidden flex flex-col min-h-[450px]">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h4 className="text-sm font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                                            <i className="fas fa-mouse-pointer"></i> Haz clic para asignar
+                                        </h4>
+                                        <i className="fas fa-satellite-dish animate-pulse text-emerald-400"></i>
+                                    </div>
+                                    
+                                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed bg-slate-800/50 p-3 rounded-xl">
+                                        <b className="text-emerald-300">Paso 1:</b> Selecciona una señal reciente.<br/>
+                                        <b className="text-emerald-300">Paso 2:</b> Haz clic en cualquier <span className="text-emerald-300 bg-emerald-500/20 px-1 rounded">valor verde</span> del árbol.<br/>
+                                        <b className="text-emerald-300">Paso 3:</b> Elige para qué lo quieres usar (teléfono, condición, variable).
+                                    </p>
+
+                                    <select 
+                                        className="w-full bg-slate-800 border-none rounded-xl px-3 py-2 text-xs text-slate-200 mb-3 outline-none focus:ring-1 focus:ring-emerald-500"
+                                        onChange={(e) => {
+                                            const log = data.logs.find(l => l.id === e.target.value);
+                                            setSelectedSignal(log ? log.payload : null);
+                                            setJsonPopup(null);
+                                        }}
+                                    >
+                                        <option value="">-- Selecciona una señal capturada --</option>
+                                        {data.logs.slice(0, 10).map(l => (
+                                            <option key={l.id} value={l.id}>{new Date(l.created_at).toLocaleString()} - Señal</option>
+                                        ))}
+                                    </select>
+
+                                    <div className="flex-1 bg-slate-950 rounded-xl p-4 overflow-auto custom-scrollbar border border-slate-800 relative">
+                                        {selectedSignal ? (
+                                            <JsonTree data={selectedSignal} onLeafClick={(path, value, e) => {
+                                                const rect = e.target.getBoundingClientRect();
+                                                const t = data.templates.find(x => x.id === selectedTemplate);
+                                                const vars = t ? (t.content.match(/{{(.*?)}}/g) || []).map(v => v.replace('{{','').replace('}}','')) : [];
+                                                setJsonPopup({ path, value, x: rect.left, y: rect.bottom + 4, vars });
+                                            }} />
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-3">
+                                                <i className="fas fa-inbox text-3xl"></i>
+                                                <p className="text-xs text-center">Selecciona una señal arriba<br/>para ver sus campos.</p>
+                                                {data.logs.length === 0 && (
+                                                    <p className="text-[10px] text-slate-600 bg-slate-800 p-3 rounded-lg mt-2 text-center">
+                                                        <i className="fas fa-info-circle mr-1"></i>
+                                                        No hay señales aún. Envía un POST a tu URL de Webhook para capturar la primera.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex gap-3">
+                                <Button type="button" variant="secondary" className="flex-1" onClick={() => { setModals({ ...modals, automation: false }); setJsonPopup(null); setSelectedSignal(null); }}>Cancelar</Button>
+                                <Button type="submit" className="flex-[2] py-3 shadow-blue-500/20">
+                                    {editingRule ? 'Guardar Cambios' : 'Activar Regla'}
+                                </Button>
+                            </div>
+                        </form>
+
+                        {jsonPopup && (<>
+                            <div className="fixed inset-0 z-[99]" onClick={() => setJsonPopup(null)}></div>
+                            <div className="fixed z-[100] bg-white rounded-xl shadow-2xl border border-slate-200 p-1.5 min-w-[220px] animate-in fade-in zoom-in duration-150" 
+                                style={{ left: Math.min(jsonPopup.x, window.innerWidth - 240), top: Math.min(jsonPopup.y, window.innerHeight - 300) }}>
+                                <p className="text-[10px] text-slate-400 px-3 py-1.5 border-b mb-1 font-mono truncate" title={jsonPopup.path}>{jsonPopup.path}</p>
+                                <button type="button" onClick={() => { document.querySelector('[name="aphone"]').value = jsonPopup.path; setJsonPopup(null); }}
+                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-blue-50 text-sm flex items-center gap-2.5 transition-colors">
+                                    <span>📱</span> <span>Usar como <b>Teléfono</b></span>
+                                </button>
+                                <button type="button" onClick={() => { document.querySelector('[name="triggerPath"]').value = jsonPopup.path; document.querySelector('[name="triggerValue"]').value = jsonPopup.value; setJsonPopup(null); }}
+                                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-purple-50 text-sm flex items-center gap-2.5 transition-colors">
+                                    <span>🎯</span> <span>Usar como <b>Condición</b></span>
+                                </button>
+                                {(jsonPopup.vars || []).length > 0 && <div className="border-t my-1"></div>}
+                                {(jsonPopup.vars || []).map(v => (
+                                    <button type="button" key={v} onClick={() => { const el = document.querySelector(`.mapping-input[data-var="${v}"]`); if(el) el.value = jsonPopup.path; setJsonPopup(null); }}
+                                        className="w-full text-left px-3 py-2 rounded-lg hover:bg-green-50 text-sm flex items-center gap-2.5 transition-colors">
+                                        <span>📝</span> <span>Usar para <b className="text-green-600">{`{{${v}}}`}</b></span>
+                                    </button>
+                                ))}
+                            </div>
+                        </>)}
+                    </Modal>
+                </div>
+            );
+
+            // --- API HELPERS ---
+            async function saveItem(endpoint, body, id = null) {
+                const method = id ? 'PUT' : 'POST';
+                const url = id ? `${API_BASE}/${endpoint}/${id}` : `${API_BASE}/${endpoint}`;
+                await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-API-Key': localStorage.getItem('ws_key') }, body: JSON.stringify(body) });
+                refreshAll();
+            }
+
+            async function deleteItem(endpoint, id) {
+                if (confirm('¿Estás seguro de eliminar este elemento?')) {
+                    await fetch(`${API_BASE}/${endpoint}/${id}`, { method: 'DELETE', headers: { 'X-API-Key': localStorage.getItem('ws_key') } });
+                    refreshAll();
+                }
+            }
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

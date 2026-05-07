@@ -1,0 +1,58 @@
+services:
+  # 1. EL MOTOR (Evolution API)
+  - type: web
+    name: evolution-api
+    env: docker
+    image: atendai/evolution-api:v1.8.3
+    plan: free
+    envVars:
+      - key: DATABASE_PROVIDER
+        value: postgresql
+      - key: DATABASE_CONNECTION_URI
+        sync: false # Configurar en Render Dashboard (Tu URL de Supabase)
+      - key: CACHE_REDIS_ENABLED
+        value: "true"
+      - key: CACHE_REDIS_URI
+        fromService:
+          type: redis
+          name: evolution-redis
+          property: connectionString
+      - key: AUTHENTICATION_TYPE
+        value: apikey
+      - key: AUTHENTICATION_API_KEY
+        value: super_secret_key_123
+      - key: AUTHENTICATION_EXPOSE_IN_ENV
+        value: "true"
+      - key: SERVER_URL
+        value: https://evolution-api.onrender.com # Cambiar por tu URL de Render
+
+  # 2. EL WRAPPER (Nuestra API SaaS)
+  - type: web
+    name: whatsapp-api-wrapper
+    env: docker
+    dockerContext: .
+    dockerfilePath: Dockerfile
+    plan: free
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: EVOLUTION_API_URL
+        fromService:
+          type: web
+          name: evolution-api
+          property: host
+      - key: EVOLUTION_GLOBAL_API_KEY
+        value: super_secret_key_123
+      - key: SUPABASE_URL
+        sync: false # Configurar en Render Dashboard
+      - key: SUPABASE_SERVICE_KEY
+        sync: false # Configurar en Render Dashboard
+      - key: BACKEND_WEBHOOK_URL
+        value: https://whatsapp-api-wrapper.onrender.com/api/v1/webhooks
+
+# 3. REDIS (Para velocidad)
+databases:
+  - name: evolution-redis
+    type: redis
+    plan: free
+    ipAllowList: []
