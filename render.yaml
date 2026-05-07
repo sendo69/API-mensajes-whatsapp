@@ -37,10 +37,7 @@ services:
       - key: PORT
         value: 3000
       - key: EVOLUTION_API_URL
-        fromService:
-          type: web
-          name: evolution-api
-          property: host
+        value: http://evolution-api:8080 # Comunicación interna rápida en puerto 8080
       - key: EVOLUTION_GLOBAL_API_KEY
         value: super_secret_key_123
       - key: SUPABASE_URL
