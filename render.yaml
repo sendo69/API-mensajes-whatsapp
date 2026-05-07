@@ -18,7 +18,7 @@ services:
         fromService:
           type: redis
           name: evolution-redis
-          property: redisConnectionString # Nombre exacto de la propiedad en Render
+          property: connectionString # Corregido según el error del validador de Render
       - key: AUTHENTICATION_TYPE
         value: apikey
       - key: AUTHENTICATION_API_KEY
