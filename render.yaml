@@ -1,15 +1,15 @@
 services:
-  # 1. EL MOTOR (Evolution API)
+  # 1. EL MOTOR (Evolution API) - Usando imagen oficial
   - type: web
     name: evolution-api
-    env: docker
-    image: atendai/evolution-api:v1.8.3
     plan: free
+    image: atendai/evolution-api:v1.8.3
+    region: oregon # O la región que prefieras
     envVars:
       - key: DATABASE_PROVIDER
         value: postgresql
       - key: DATABASE_CONNECTION_URI
-        sync: false # Configurar en Render Dashboard (Tu URL de Supabase)
+        sync: false # Tu URL de Supabase (Poner en el dashboard de Render)
       - key: CACHE_REDIS_ENABLED
         value: "true"
       - key: CACHE_REDIS_URI
@@ -24,32 +24,33 @@ services:
       - key: AUTHENTICATION_EXPOSE_IN_ENV
         value: "true"
       - key: SERVER_URL
-        value: https://evolution-api.onrender.com # Cambiar por tu URL de Render
+        value: https://evolution-api.onrender.com # Cambiar por tu URL final de Render
 
-  # 2. EL WRAPPER (Nuestra API SaaS)
+  # 2. NUESTRO WRAPPER (La API SaaS) - Construido desde el código
   - type: web
     name: whatsapp-api-wrapper
+    plan: free
     env: docker
     dockerContext: .
     dockerfilePath: Dockerfile
-    plan: free
+    region: oregon
     envVars:
       - key: PORT
         value: 3000
       - key: EVOLUTION_API_URL
-        value: http://evolution-api:8080 # Comunicación interna rápida en puerto 8080
+        value: http://evolution-api:8080
       - key: EVOLUTION_GLOBAL_API_KEY
         value: super_secret_key_123
       - key: SUPABASE_URL
-        sync: false # Configurar en Render Dashboard
+        sync: false # De tu dashboard de Supabase
       - key: SUPABASE_SERVICE_KEY
-        sync: false # Configurar en Render Dashboard
+        sync: false # De tu dashboard de Supabase
       - key: BACKEND_WEBHOOK_URL
         value: https://whatsapp-api-wrapper.onrender.com/api/v1/webhooks
 
-# 3. REDIS (Para velocidad)
-databases:
-  - name: evolution-redis
-    type: redis
+  # 3. REDIS (Para velocidad y sesiones)
+  - type: redis
+    name: evolution-redis
     plan: free
-    ipAllowList: []
+    region: oregon
+    ipAllowList: [] # Solo accesible internamente por los servicios de arriba
