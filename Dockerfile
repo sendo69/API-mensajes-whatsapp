@@ -20,8 +20,6 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/.env ./ 
-
 # Instalar solo dependencias de producción
 RUN npm install --omit=dev
 
