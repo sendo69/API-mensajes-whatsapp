@@ -4,7 +4,8 @@ services:
     name: evolution-api
     plan: free
     env: image # Requerido por Render para imágenes externas
-    image: atendai/evolution-api:v1.8.3
+    image:
+      url: atendai/evolution-api:v1.8.3 # Formato de objeto para evitar error de unmarshal
     region: oregon
     envVars:
       - key: DATABASE_PROVIDER
